@@ -102,6 +102,10 @@ const LISTS = {
         { name: "-" },
         { name: "=" }
     ],
+    regmethod: [
+        { name: 'Drill / peck', id: 'drill' },
+        { name: 'Helical mill', id: 'mill' }
+    ],
     regpoints: [
         { name: "2" },
         { name: "3" }

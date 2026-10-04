@@ -2,18 +2,58 @@
 
 import { base } from '../../../../geo/base.js';
 import { version } from '../../../../moto/license.js';
+import { contourFeed } from '../core/contour-feed.js';
 
 const { util } = base;
 
 /**
  * @returns {Array} gcode lines
  */
-export function cam_export(print, online) {
+export function cam_export(print, online, ondone, debug, standalone = false) {
     const widget = print.widgets[0];
     if (!widget) return;
 
     const { settings } = print;
     const { device } = settings;
+
+    // Export each operation afresh so modal position, feed, tool and spindle
+    // state cannot leak from the preceding operation into a standalone file.
+    if (!standalone) {
+        const groups = [];
+        let group, previousMode;
+        for (const layer of print.output) {
+            if (layer.mode && !layer.mode.silent && layer.mode !== previousMode) {
+                previousMode = layer.mode;
+                groups.push(group = { mode: layer.mode, layers: [] });
+            }
+            if (group) group.layers.push(layer);
+        }
+        const transformed = print.output.some(layer => Array.isArray(layer) && layer.some(out => out.point?.mod));
+        const safeZ = print.output.reduce((z, layer) => Array.isArray(layer)
+            ? layer.reduce((z, out) => out.point ? Math.max(z, out.point.z) : z, z) : z,
+            transformed ? -Infinity : (settings.stock?.z || 0) + (settings.process.camZClearance || 0));
+        groups.forEach(({ mode, layers }, index) => {
+            const output = layers.map(layer => Object.assign(layer.map(out => ({
+                ...out, point: out.point ? { ...out.point } : out.point
+            })), { mode: layer.mode, spindle: layer.spindle }));
+            const moves = output.flat().filter(out => out.point && out.tool && out.type !== 'lerp');
+            const first = moves[0], last = moves[moves.length - 1];
+            if (first && last) {
+                output[0].unshift({ ...first, point: { ...first.point, z: safeZ }, emit: 0, speed: 0 });
+                output[output.length - 1].push({ ...last, point: { ...last.point, z: safeZ }, emit: 0, speed: 0 });
+            }
+            const chunks = [];
+            const separate = Object.assign(Object.create(Object.getPrototypeOf(print)), print, { output, settings: { ...settings,
+                process: { ...settings.process, camToolInit: false, camFirstZMax: true },
+                device: { ...device, gcodeChange: [] }
+            }});
+            cam_export(separate, chunk => { if (typeof chunk === 'string' && chunk) chunks.push(chunk); }, undefined, undefined, true);
+            const tool = first?.tool;
+            const slug = value => String(value || 'operation').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+            const name = `${String(index + 1).padStart(2, '0')}-${slug(mode.type)}${tool ? `-T${tool.getNumber()}-${slug(tool.getName())}` : ''}`;
+            online({ operation: { name, data: chunks.join('\r\n') } });
+        });
+    }
 
     let i,
         time = 0,
@@ -87,6 +127,12 @@ export function cam_export(print, online) {
     }
 
     function append(line) {
+        if (line && standalone && !isRML) {
+            const commentFree = line.replace(/\([^)]*\)/g, '').split(';')[0];
+            if (/M0?6(?=[^0-9.]|$)/i.test(commentFree)) {
+                line = commentFree.replace(/M0?6(?=[^0-9.]|$)/gi, '').replace(/T\s*\d+/gi, '').trim();
+            }
+        }
         if (line) {
             lines++;
             bytes += line.length;
@@ -275,8 +321,22 @@ export function cam_export(print, online) {
             nl = (compact_output && lastGn === gn) ? [] : [gn],
             maxf = (dz < 0 ? maxZd : maxXYd) || speed,
             feed = Math.min(speed || maxf, maxf),
-            dist = Math.sqrt(dx * dx + dy * dy + dz * dz),
-            newFeed = feed && feed !== pos.f;
+            dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        // Explicit metadata prevents entry, travel and other operations from
+        // inheriting surface feeds. Recheck rounded/scaled export coordinates.
+        if (!isRML && !laserOp && mode?.type === 'contour' &&
+            out.type === 'contour-surface' && out.emit === 1 && !arc && !da &&
+            newpos.a === undefined && !spro.camStockIndexed) {
+            feed = contourFeed(Math.min(speed, maxXYd || speed), maxZd, dx, dy, dz);
+            // Round feed down so output precision cannot exceed the Z limit.
+            const precision = Math.pow(10, decimals);
+            feed = Math.floor(feed * factor * precision) / (factor * precision);
+            if (!(Number.isFinite(feed) && feed > 0)) {
+                throw new Error('Contour feed is too small for the selected G-code precision');
+            }
+        }
+        const newFeed = feed && feed !== pos.f;
 
         // catch NaN in debugging
         // if (nl.length === 0 || nl[0] === undefined)

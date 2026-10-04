@@ -81,13 +81,93 @@ It can trace along the X or Y axis and has configurable precision. It is useful 
 - Finishing complex wall geometries
 - Cleaning up a part after [roughing](#rough)
 
+Contour's **feeds & speeds** section contains spindle, cutting feed and entry
+plunge rate. Plunge **0** (also used by older operations without this setting)
+uses the global Z / plunge speed limit. A positive entry plunge is capped by
+that global limit and the cutting feed.
+
+For non-indexed, linear surface cuts, feed is limited by the actual Z component
+in either direction: `Z speed = path feed × |Z change| / move length`.
+Shallow descending curves can therefore use the cutting feed without exceeding
+the global Z limit. Steep slopes are slowed as needed. Entries, repositioning,
+pure-Z cuts, indexed moves and other operation types retain conservative handling.
+Export rechecks the rounded/scaled coordinates and rounds affected feeds down.
+The global Z limit and Contour cutting feed must be positive and finite.
+Contour does not infer how much material a preceding Rough operation removed;
+choose feeds for the actual cutter, material and remaining stock.
+
 ### Register
+
+For X/Y holes, **Method** explicitly selects **Drill / peck** or **Helical mill**.
+New operations default to Drill / peck (the last selected method may be remembered).
+Existing operations without a method retain their previous diameter-based
+behaviour and acquire the matching method when opened for editing.
+
+Drill / peck shows plunge, peck depth, dwell and lift. It makes a tool-sized hole;
+saved milling diameter, allowance, pitch and finish values remain stored but
+inactive. Helical mill shows hole diameter, allowance, programmed diameter,
+cutting/plunge feeds, pitch and finish circle. Its adjusted diameter must exceed
+the cutter diameter and it requires a centre-cutting end mill. The programmed
+diameter uses the same label size as other controls, with a bold value.
+
+
+The Register panel and Flip information popup show advisory warnings when an enabled three-point
+X/Y registration layout on either side conflicts with the intended flip axis.
+Flip X normally matches three-point Register X; Flip Y matches Register Y.
+The wrong axis exchanges the single-pin and paired-pin ends. Warnings repeat
+when Flip is clicked but do not block flipping or alter settings/toolpaths.
+Disabled operations and operations beyond the end-of-chain marker are ignored.
+Two-point layouts and puzzle patterns are not automatically judged.
+
+While the Flip panel is open, a gold line marks the rotation axis through the
+stock and a purple arrow shows a 180° half-turn. Click the **ⓘ information**
+button in the Flip panel to open the setup instructions, compatibility warnings
+and guide legend.
+The popup describes which machine-coordinate edges exchange: Flip X exchanges +Y/−Y, and Flip Y exchanges
++X/−X. These directions remain tied to the stock as the camera moves. Either
+turning direction reaches the same final orientation. Closing the panel or
+performing the flip removes the guide.
+
+
+For X/Y registration, **hole diameter** is the nominal bore diameter.
+**Diameter allowance** adds a non-negative amount to that diameter, with a
+default of `0` (no adjustment). For example, `6 mm` plus `0.05 mm` allowance
+programs a `6.05 mm` bore, increasing the cutter-centre radius by `0.025 mm`.
+The panel shows **Programmed diameter** in the current workspace units.
+Missing allowance values in existing operations mean zero. The adjusted
+diameter determines cutter compensation and validation in Helical mill mode.
+Drill / peck ignores the saved hole diameter and allowance; Helical mill
+requires a positive nominal diameter larger than the cutter after allowance. Pin positions and spacing are unchanged. In Drill / peck mode, **step down / peck depth** controls
+pecking (`0` is a continuous plunge). Use a drill or a centre-cutting,
+plunge-capable end mill. Helical mill rejects an adjusted diameter no larger than the cutter.
+
+Select Helical mill to cut an oversized hole with a centre-cutting end mill.
+**Helix pitch** is the positive depth per revolution; **bottom finish circle**
+adds a full revolution at final depth. Cutting feed and plunge feed apply;
+peck, lift and dwell controls are hidden. Cutter compensation is automatic.
+Concentric overlapping helices clear larger bores without leaving a core.
+Pin positions, spacing and the puzzle-pattern modes retain their behaviour.
+
+CAM export offers a **Single combined file**, **ZIP — one file per operation**,
+and **Download selected operation**. Separate files use numbered, tool-aware
+filenames, restart modal state, retract before initial XY positioning and
+after cutting, and suppress M6 tool changes. They retain the selected device's
+header/footer. Keep XY zero fixed and re-establish Z after a manual tool change;
+later operations can depend on material removed by earlier ones.
+
+The built-in **Genmitsu PROVerXL 6050 Plus** GRBL profile uses a 600 × 500 ×
+115 mm work envelope and a spindle command scale of 1000, with no automatic
+tool-change macro. Set stock spindle speed using the control-box knob.
+
 
 <ImageCarousel base="/img/CAM/example/register/" images="register" />
 
 The Register operation drills holes in the sides of a part,  
 helping keep the part in the same place when it is flipped onto its opposite face.  
 The operation has options to drill on different sides and can even generate a puzzle-piece-like pattern for registration.
+For a three-point registration layout, **pin spacing** controls the center-to-center distance between
+the paired holes. Wider spacing improves resistance to angular alignment error. A value of `0` keeps
+the automatic spacing derived from the selected tool diameter.
 
 ## Specific Operations
 

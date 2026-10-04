@@ -5,6 +5,8 @@ import { env, opAdd, opRender } from './init-ui.js';
 import { CAM } from './dispatch.js';
 import { clearTabs, restoreTabs } from './cl-tab.js';
 import { updateStock } from './cl-stock.js';
+import { hideFlipGuide } from './cl-flip-guide.js';
+import { flipWarnings } from '../core/flip-guidance.js';
 
 export function opFlip() {
     api.view.set_arrange();
@@ -14,6 +16,9 @@ export function opFlip() {
     // add flip singleton to b-side
     let add2 = op2.length === 0;
     let axis = env.poppedRec.axis;
+    const warnings = flipWarnings(process, axis);
+    if (warnings.length) api.alerts.show(warnings.join(' '), 12);
+    hideFlipGuide();
     env.flipping = true;
     process.camZAnchor = {
         top: "bottom",

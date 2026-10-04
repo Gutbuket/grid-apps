@@ -60,9 +60,10 @@ function callExport(callback, mode, names) {
     let alert = api.feature.work_alerts ? api.show.alert("Exporting") : null;
     let gcode = [];
     let section = [];
-    let sections = { };
+    let sections = { operations: [] };
     client.export(api.conf.get(), (line) => {
         if (typeof line !== 'string') {
+            if (line.operation) sections.operations.push(line.operation);
             if (line.section) {
                 sections[line.section] = section = [];
             }
@@ -386,18 +387,25 @@ function exportGCodeDialog(gcode, sections, info, names) {
         // in cam mode, show zip file option
         let downloadZip = $('print-zip');
         downloadZip.style.display = sections ? 'flex' : 'none';
+        $('print-download').textContent = cam ? 'Single combined file' : 'gcode';
+        downloadZip.textContent = 'ZIP — one file per operation';
+        const operationFiles = (sections?.operations || []).map(op => ({ name: `${op.name}.${fileext}`, data: op.data }));
+        const picker = $('print-operation');
+        picker.replaceChildren();
+        operationFiles.forEach((file, index) => {
+            const option = document.createElement('option');
+            option.value = index;
+            option.textContent = file.name;
+            picker.appendChild(option);
+        });
+        $('print-operation-row').style.display = cam && operationFiles.length ? 'flex' : 'none';
+        $('print-operation-download').onclick = () => {
+            const file = operationFiles[Number(picker.value)];
+            if (file) api.util.download(file.data, file.name);
+        };
+        downloadZip.disabled = !operationFiles.length;
         downloadZip.onclick = function() {
-            let files = [];
-            for (let [ name, data ] of Object.entries(sections)) {
-                if (name.indexOf('op-') === 0) {
-                    let head = sections.header || [];
-                    let foot = sections.footer || [];
-                    files.push({
-                        name: `${name}.${fileext}`,
-                        data: [ ...head, ...data, ...foot ].join('\r\n')
-                    })
-                }
-            }
+            const files = operationFiles;
             client.zip(files, progress => {
                 api.show.progress(progress.percent/100, "generating zip files");
             }, output => {

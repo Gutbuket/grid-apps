@@ -3,6 +3,7 @@
 import { CamOp } from '../core/op.js';
 import { Tool } from '../core/tool.js';
 import { generate as Topo } from './topo3.js';
+import { contourFeed } from '../core/contour-feed.js';
 import { newPoint } from '../../../../geo/point.js';
 import { newPolygon } from '../../../../geo/polygon.js';
 import { newSlice } from '../../../core/slice.js';
@@ -137,7 +138,14 @@ class OpContour extends CamOp {
         let bounds = widget.getBoundingBox();
         let depthData = [];
 
-        setTool(op.tool, op.rate, process.camFastFeedZ);
+        // Zero or an absent plunge preserves the previous global setting.
+        const requestedPlunge = op.plunge ?? 0;
+        if (!(Number.isFinite(requestedPlunge) && requestedPlunge >= 0)) {
+            throw new Error('Contour entry plunge must be a finite, non-negative rate (0 uses the global limit)');
+        }
+        contourFeed(op.rate, process.camFastFeedZ, 1, 0, 0);
+        const plunge = requestedPlunge || process.camFastFeedZ;
+        setTool(op.tool, op.rate, Math.min(plunge, process.camFastFeedZ));
         setContouring(true, toolStep * 1.5, topo.coastline);
         setTolerance(this.tolerance);
 
@@ -161,7 +169,7 @@ class OpContour extends CamOp {
             if (poly.last() === point) {
                 poly.reverse();
             }
-            polyEmit(poly);
+            polyEmit(poly, undefined, false, { surfaceCut: true });
             newLayer();
         });
     }

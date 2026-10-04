@@ -652,6 +652,8 @@ self.lang['en-us'] = {
     cd_regi_l:      ["drill registration holes","for double-sided parts","independent of enable","drilling but uses same","tool and settings"],
     cd_rego_s:      "part offset",
     cd_rego_l:      ["offset of hole center","from part bounding box","in workspace units"],
+    cd_regs_s:      "pin spacing",
+    cd_regs_l:      ["center-to-center distance","between the paired holes","in a 3-point layout","0 = automatic from tool size"],
 
     // CNC HELICAL tolpath
     ch_menu:        "helical",

@@ -5,6 +5,8 @@ import { api } from '../../../app/api.js';
 import { env, opRender } from './init-ui.js';
 import { Tool } from '../core/tool.js';
 import { opFlip } from './cl-flip.js';
+import { showFlipGuide } from './cl-flip-guide.js';
+import { flipWarnings, flipInstruction } from '../core/flip-guidance.js';
 import { selectHoles } from './cl-hole.js';
 import { selectHelical } from './cl-helical.js';
 import { surfaceAdd } from './cl-surface.js';
@@ -20,6 +22,33 @@ const { toInt, toFloat, toFloatArray } = UC;
 
 const units = true;
 let seed = Date.now();
+
+function flipInformationButton() {
+    const button = UC.newButton('ⓘ', () => {
+        const axis = env.poppedRec.axis;
+        const warnings = flipWarnings(conf.get().process, axis);
+        const warning = warnings.length ? '<br><br>' + warnings.join(' ') : '';
+        UC.alert(flipInstruction(axis) + warning + '<br><br>Gold line: rotation axis.<br>Purple arrow: half-turn.<br><br>Either turning direction reaches the same final orientation.');
+    }, { title: 'Flip setup information' });
+    button.setAttribute('aria-label', 'Flip setup information');
+    button.setAttribute('aria-haspopup', 'dialog');
+    return button;
+}
+
+function registerHoles() {
+    return !['-', '='].includes(env.poppedRec.axis);
+}
+
+function registerDiameter(rec, tool) {
+    const diameter = Number(rec.diameter || 0);
+    return diameter > 0 ? diameter + Number(rec.allowance ?? 0) : tool.fluteDiameter();
+}
+
+function registerMilling() {
+    const rec = env.poppedRec;
+    const tool = new Tool(conf.get(), rec.tool);
+    return registerHoles() && (rec.method === 'mill' || (rec.method == null && registerDiameter(rec, tool) > tool.fluteDiameter() + 0.001));
+}
 
 function hasIndexing() {
     return env.isIndexed;
@@ -82,6 +111,12 @@ export function createPopOp(type, map) {
         div: UC.newElement('div', { id: `${type}-op`, class: "cam-pop-op" }),
         use: (rec) => {
             op.rec = rec;
+            if (type === 'register' && rec.method == null) {
+                const tool = new Tool(conf.get(), rec.tool);
+                rec.method = registerDiameter(rec, tool) > tool.fluteDiameter() + 0.001 ? 'mill' : 'drill';
+            }
+            // Opening a legacy operation must not inherit a remembered allowance.
+            if (type === 'register' && rec.allowance == null) rec.allowance = 0;
             for (let [key, val] of Object.entries(op.inputs)) {
                 let type = val.type;
                 let from = map[key];
@@ -109,13 +144,18 @@ export function createPopOp(type, map) {
             const settings = conf.get();
             const { tool } = new Tool(settings, op.rec.tool); //get tool by id
             const opType = op.rec.type
-            const drillingOp = opType == "drill" || ( opType == "register" && op.rec.axis != "-" )
+            const regHoles = opType === 'register' && !['-', '='].includes(op.rec.axis);
+            const regTool = new Tool(settings, op.rec.tool);
+            const regMill = regHoles && (op.rec.method === 'mill' || (op.rec.method == null && registerDiameter(op.rec, regTool) > regTool.fluteDiameter() + 0.001));
+            const drillingOp = opType === 'drill' || (regHoles && !regMill);
 
             if (!drillingOp && tool.type == "drill") {
                 alerts.show(`Warning: Drills should not be used for non-drilling operations.`)
             }
             else if (drillingOp && tool.type != "drill") {
-                alerts.show(`Warning: Only drills should be used for drilling operations.`)
+                alerts.show(regHoles
+                    ? 'Warning: Drill / peck makes a tool-sized hole. Use a drill or a centre-cutting, plunge-capable end mill with a safe peck depth.'
+                    : 'Warning: Only drills should be used for drilling operations.')
             }
 
             for (let [key, val] of Object.entries(op.rec)) {
@@ -138,6 +178,26 @@ export function createPopOp(type, map) {
         },
         hideshow: () => {
             let conf = api.conf.get();
+            if (type === 'register') {
+                const warnings = flipWarnings(conf.process);
+                op.inputs.compatibility.textContent = warnings.join(' ');
+                op.inputs.compatibility.style.color = '#bf7000';
+                op.inputs.compatibility.style.whiteSpace = 'normal';
+                op.inputs.compatibility.style.maxWidth = '260px';
+            }
+            if (type === 'flip') {
+                showFlipGuide(op.rec.axis);
+            }
+            if (type === 'register' && op.inputs.programmed) {
+                const diameter = registerDiameter(op.rec, new Tool(conf, op.rec.tool));
+                const inches = conf.controller.units !== 'mm';
+                const label = document.createElement('label');
+                label.append('Programmed diameter: ');
+                const value = document.createElement('strong');
+                value.textContent = `${(diameter / (inches ? 25.4 : 1)).toFixed(inches ? 4 : 3)} ${inches ? 'in' : 'mm'}`;
+                label.append(value);
+                op.inputs.programmed.replaceChildren(label);
+            }
             for (let inp of Object.values(op.inputs)) {
                 let parent = inp.parentElement;
                 if (parent && parent.setVisible && parent.__opt.show) {
@@ -403,6 +463,7 @@ export function createPopOps() {
         spindle: 'camContourSpindle',
         step: 'camContourOver',
         rate: 'camContourSpeed',
+        plunge: 'camContourPlunge',
         angle: 'camContourAngle',
         leave: 'camContourLeave',
         tolerance: 'camTolerance',
@@ -419,8 +480,11 @@ export function createPopOps() {
         tool: UC.newSelect(LANG.cc_tool, {}, "tools"),
         axis: UC.newSelect(LANG.cd_axis, {}, "xyaxis"),
         sep: UC.newBlank({ class: "pop-sep" }),
+        exp: UC.newExpand("feeds & speeds", {}),
         spindle: UC.newInput(LANG.cc_spnd_s, { title: LANG.cc_spnd_l, convert: toInt, show: hasSpindle }),
-        rate: UC.newInput(LANG.cc_feed_s, { title: LANG.cc_feed_l, convert: toInt, units }),
+        rate: UC.newInput(LANG.cc_feed_s, { title: LANG.cc_feed_l, convert: toInt, units, bound: UC.bound(1, Infinity) }),
+        plunge: UC.newInput(LANG.cc_plng_s, { title: 'Entry plunge rate. 0 uses the global Z / plunge speed limit. Surface cuts use feed rate, limited by their actual Z speed.', convert: toInt, units, bound: UC.bound(0, Infinity) }),
+        exp_end: UC.endExpand(),
         sep: UC.newBlank({ class: "pop-sep" }),
         step: UC.newInput(LANG.cc_sovr_s, { title: LANG.cc_sovr_l, convert: toFloat, bound: UC.bound(0.01, 10.0) }),
         leave: UC.newInput(LANG.cf_leav_s, { title: LANG.cf_leav_l, convert: toFloat, bound: UC.bound(0, 100) }),
@@ -614,6 +678,12 @@ export function createPopOps() {
         lift:    'camDrillLift',
         feed:    'camRegisterSpeed',
         offset:  'camRegisterOffset',
+        spacing: 'camRegisterSpacing',
+        method: 'camRegisterMethod',
+        diameter: 'camRegisterDiameter',
+        allowance: 'camRegisterAllowance',
+        pitch: 'camRegisterPitch',
+        finish: 'camRegisterFinish',
         thru:    'camRegisterThru',
     }).inputs = {
         tool:     UC.newSelect(LANG.cc_tool, {}, "tools"),
@@ -622,13 +692,22 @@ export function createPopOps() {
         sep:      UC.newBlank({class:"pop-sep"}),
         spindle:  UC.newInput(LANG.cc_spnd_s, {title:LANG.cc_spnd_l, convert:toInt, show:hasSpindle}),
         rate:     UC.newInput(LANG.cc_plng_s, {title:LANG.cc_plng_l, convert:toInt, units:true}),
-        feed:     UC.newInput(LANG.cc_feed_s, {title:LANG.cc_feed_l, convert:toInt, units:true, show:() => env.poppedRec.axis === '-'}),
+        feed:     UC.newInput(LANG.cc_feed_s, {title:LANG.cc_feed_l, convert:toInt, units:true, show:() => !registerHoles() || registerMilling()}),
+        method: UC.newSelect('method', {show:registerHoles, title:'Drill / peck makes a tool-sized hole. Helical mill uses the requested hole diameter and allowance.'}, 'regmethod'),
+        diameter: UC.newInput('hole diameter', {title:'Nominal milled hole diameter. Diameter plus allowance must exceed the cutter diameter.', convert:toFloat, units:true, bound:UC.bound(0,Infinity), show:registerMilling}),
+        allowance: UC.newInput('diameter allowance', {title:'Added to the hole diameter, not the radius. 6 mm + 0.05 mm gives a programmed 6.05 mm bore. 0 adds no allowance; ignored for tool-sized drilling.', convert:toFloat, units:true, bound:UC.bound(0,Infinity), show:registerMilling}),
+        programmed: UC.newBlank({show:registerMilling}),
+        compatibility: UC.newBlank({show:() => flipWarnings(conf.get().process).length > 0}),
+        pitch:    UC.newInput('helix pitch', {title:'Depth per revolution. Must be greater than zero.', convert:toFloat, units:true, show:registerMilling}),
+        finish:   UC.newBoolean('bottom finish circle', undefined, {show:registerMilling}),
         sep:      UC.newBlank({class:"pop-sep"}),
-        down:     UC.newInput(LANG.cc_sdwn_s, {title:LANG.cc_sdwn_l, convert:toFloat, units:true}),
-        dwell:    UC.newInput(LANG.cd_dwll_s, {title:LANG.cd_dwll_l, convert:toFloat, show:() => env.poppedRec.axis !== '-'}),
-        lift:     UC.newInput(LANG.cd_lift_s, {title:LANG.cd_lift_l, convert:toFloat, units:true, show:() => env.poppedRec.axis !== '-'}),
+        down:     UC.newInput('step down / peck depth', {title:'For holes: 0 gives a continuous plunge; positive values give pecks. End mills must be centre-cutting and plunge-capable.', convert:toFloat, units:true, show:() => !registerMilling()}),
+        dwell:    UC.newInput(LANG.cd_dwll_s, {title:LANG.cd_dwll_l, convert:toFloat, show:() => registerHoles() && !registerMilling()}),
+        lift:     UC.newInput(LANG.cd_lift_s, {title:LANG.cd_lift_l, convert:toFloat, units:true, show:() => registerHoles() && !registerMilling()}),
         sep:      UC.newBlank({class:"pop-sep"}),
         offset:   UC.newInput(LANG.cd_rego_s, {title:LANG.cd_rego_l, convert:toFloat, units:true, }),
+        spacing:  UC.newInput(LANG.cd_regs_s, {title:LANG.cd_regs_l, convert:toFloat, units:true,
+            bound:UC.bound(0,Infinity), show:() => env.poppedRec.points == 3 && !['-', '='].includes(env.poppedRec.axis)}),
         thru:     UC.newInput(LANG.cd_thru_s, {title:LANG.cd_thru_l, convert:toFloat, units:true}),
     };
 
@@ -680,10 +759,11 @@ export function createPopOps() {
         invert: 'camFlipInvert'
     }).inputs = {
         axis: UC.newSelect(LANG.cd_axis, {}, "regaxis"),
+        action: UC.newRow([UC.newButton(LANG.cf_menu, opFlip)], { class: "ext-buttons f-row" }),
         sep: UC.newBlank({ class: "pop-sep", modes: MODES.CAM, show: zBottom }),
         invert: UC.newBoolean(LANG.cf_nvrt_s, undefined, { title: LANG.cf_nvrt_l, show: zBottom }),
         sep: UC.newBlank({ class: "pop-sep" }),
-        action: UC.newRow([UC.newButton(LANG.cf_menu, opFlip)], { class: "ext-buttons f-row" })
+        guidance: UC.newRow([flipInformationButton()], { class: "ext-buttons f-row" })
     };
 
     createPopOp('gcode', {

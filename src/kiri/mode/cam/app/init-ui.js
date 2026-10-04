@@ -13,6 +13,7 @@ import { originSelectDone } from './cl-origin.js';
 import { recreateTabs } from './cl-tab.js';
 import { showZTop, showZBottom, updateStock } from './cl-stock.js';
 import { space as SPACE } from '../../../../moto/space.js';
+import { hideFlipGuide } from './cl-flip-guide.js';
 import { space } from '../../../../moto/space.js';
 import { Stack } from '../../../app/stack.js';
 import { surfaceOn, surfaceDone } from './cl-surface.js';
@@ -392,6 +393,7 @@ export function opRender() {
         }
         el.rec = rec;
         el.unpop = () => {
+            if (type === 'flip') hideFlipGuide();
             let pos = [...parent.childNodes].indexOf(poprec.div);
             if (pos >= 0) {
                 parent.removeChild(poprec.div);

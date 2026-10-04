@@ -7,6 +7,7 @@ import { render } from '../../../core/render.js';
 import { newPrint } from '../../../core/print.js';
 import { Tool } from '../core/tool.js';
 import { newPolygon } from '../../../../geo/polygon.js';
+import { contourFeed } from '../core/contour-feed.js';
 
 const debug = false;
 const debug_push = false;
@@ -650,6 +651,23 @@ export async function prepare_one(widget, settings, print, firstPoint, update) {
             rate = plungeRate;
         }
 
+        let type;
+        if (currentOp.type === 'contour' && contouring && opts?.surfaceCut) {
+            // Recompute after any inserted safe travel/entry moves. Only cuts
+            // within a path qualify; its first point is always a transition.
+            const dx = point.x - printPoint.x;
+            const dy = point.y - printPoint.y;
+            const dz = point.z - printPoint.z;
+            if (!camStockIndexed && !isMove && !upAndOver && emit === 1 &&
+                point.a === undefined && printPoint.a === undefined && (dx || dy)) {
+                type = 'contour-surface';
+                rate = contourFeed(rate, camFastFeedZ, dx, dy, dz);
+            } else if (dz < 0 || (!(dx || dy) && dz > 0 && !isMove)) {
+                // Entries and pure-Z cuts retain the operation's plunge rate.
+                rate = Math.min(rate, plungeRate, camFastFeedZ);
+            }
+        }
+
         layerOut.mode = currentOp;
         layerOut.spindle = spindle;
         layerPush(
@@ -657,7 +675,7 @@ export async function prepare_one(widget, settings, print, firstPoint, update) {
             emit,
             rate,
             tool,
-            { center }
+            { type, center }
         );
 
         return point;
@@ -802,7 +820,7 @@ export async function prepare_one(widget, settings, print, firstPoint, update) {
      * @param {boolean} engage - optional: true to use camFullEngage speed ramp
      * @returns {Point} - the last point emitted (in widget coordinates)
      */
-    function polyEmit(poly, index, engage = false) {
+    function polyEmit(poly, index, engage = false, options = {}) {
         let arcing = camArcEnabled && !contouring;
         let points = poly.points;
 
@@ -883,7 +901,7 @@ export async function prepare_one(widget, settings, print, firstPoint, update) {
         }
 
         let lastOut;
-        let opts = engage ? { feed: feedRate * camFullEngage } : {};
+        let opts = { ...options, ...(engage ? { feed: feedRate * camFullEngage } : {}) };
 
         // arc output must handle shortened arcs from ease-down
         // future support for 3d helical arcs will fix this
